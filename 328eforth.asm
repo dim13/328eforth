@@ -5,8 +5,11 @@
 .list
 
 ;===============================================================
+;	328eForth v2.21, Chen-Hanson Ting, August 2011
+;		Use KEY to run QUIT
+;
 ;	328eForth v2.20, Chen-Hanson Ting, July 2011
-;		Fix error, quit, 2/ and ?stack
+;		Fix error, quit, 2/, ?stack, compile, [compile]
 ;
 ;	328eForth v2.10, Chen-Hanson Ting, March 2011
 ;	Adapted from 
@@ -199,7 +202,34 @@
 
 	.CSEG
 	.ORG	0
-	JMP		ORIG
+	JMP		ORIG	;1, RESET
+	JMP		RETURN	;2, INT0
+	JMP		RETURN	;3, INT1
+	JMP		RETURN	;4
+	JMP		RETURN	;5
+	JMP		RETURN	;6
+	JMP		RETURN	;7
+	JMP		RETURN	;8
+	JMP		RETURN	;9
+	JMP		RETURN	;10
+	JMP		RETURN	;11
+	JMP		RETURN	;12
+	JMP		RETURN	;13
+	JMP		RETURN	;14
+	JMP		RETURN	;15
+	JMP		RETURN	;16
+	JMP		RETURN	;17
+	JMP		RETURN	;18
+	JMP		ACC		;19, RX
+	JMP		RETURN	;20
+	JMP		RETURN	;21
+	JMP		RETURN	;22
+	JMP		RETURN	;23
+	JMP		RETURN	;24
+	JMP		RETURN	;25
+	JMP		RETURN	;26
+RETURN:
+	RETI
 
 	.ORG	$80		;byte address $100, copy to ram on boot, 
 					;saved from ram for turnkey system
@@ -221,6 +251,9 @@ UZERO:
 	.DW		LASTN	;LAST
 	.DW		$6F00	;PTR0 to BUF0
 	.DW		$6F81	;PTR1 to BUF1
+	.DW		$700	;BOT
+	.DW		$750	;EOT
+	.DW		$700	;CUR
 ULAST:
 
 	.ORG	$3800	;byte address $7000
@@ -238,6 +271,8 @@ ORIG:
 	; init parameter stack pointer
 	ldi 	yl,low(SPP)
 	ldi 	yh,high(SPP)
+	; enable global interrupt
+	sei	
 	; jump to Forth starting word
 	jmp 	COLD
 
@@ -285,7 +320,7 @@ STOIO:
 	out_	UBRR0L,xl
 	clr		xl
 	out_	UBRR0H,xl
-	ldi		xl,$18	;enable TX and RX
+	ldi		xl,$98	;enable TX and RX.  Enable RX interrupt
 	out_	UCSR0B,xl
 	ldi		xl,6	;8 data bits
 	out_	UCSR0C,xl
@@ -944,6 +979,30 @@ DPP:
 LAST:
 	RCALL	DOVAR
 	.DW		UPP+26
+
+;   BOT	( -- a )
+;	Bottom of input buffer.
+
+	COLON	3,"BOT"
+BOT:
+	RCALL	DOVAR
+	.DW		$120
+
+;   EOT	( -- a )
+;	Bottom of input buffer.
+
+	COLON	3,"EOT"
+EOT:
+	RCALL	DOVAR
+	.DW		$122
+
+;   CUR	( -- a )
+;	Bottom of input buffer.
+
+	COLON	3,"CUR"
+CUR:
+	RCALL	DOVAR
+	.DW		$124
 
 ;; Common functions
 
@@ -2323,47 +2382,52 @@ NAMEQ:
 
 ;; Terminal response
 
-;   ^H	( bot eot cur -- bot eot cur )
+;   ^H	( use bot eot cur )
 ;	Backup the cursor by one character.
 
 ;	COLON	2,"^H"
 BKSP:
-	RCALL	TOR
-	RCALL	OVER
-	RCALL	RFROM
-	RCALL	SWAPP
-	RCALL	OVER
+	RCALL	BOT
+	RCALL	AT
+	RCALL	CUR
+	RCALL	AT
 	RCALL	XORR
 	RCALL	QBRAN
 	.DW		BACK1
 	RCALL	DOLIT
 	.DW		BKSPP
+	RCALL	DUPP
 	RCALL	EMIT
-	SBIW	TOSL,1
 	RCALL	BLANK
 	RCALL	EMIT
-	RCALL	DOLIT
-	.DW		BKSPP
 	RCALL	EMIT
+	RCALL	DOLIT
+	.DW		-1
+	RCALL	CUR
+	RCALL	PSTOR
 BACK1:
 	RET
 
-;   TAP	( bot eot cur c -- bot eot cur )
+;   TAP	( c -- , use bot eot cur )
 ;	Accept and echo the key stroke and bump the cursor.
 
 ;	COLON	3,"TAP"
 TAP:
 	RCALL	DUPP
 	RCALL	EMIT
-	RCALL	OVER
+	RCALL	CUR
+	RCALL	AT
 	RCALL	CSTOR
-	adiw	tosl,1
+	RCALL	DOLIT
+	.DW		1
+	RCALL	CUR
+	RCALL	PSTOR
 	ret
 
 ;   kTAP	( bot eot cur c -- bot eot cur )
 ;	Process a key stroke, CR or backspace.
 
-;	COLON	4,"kTAP"
+;	COLON	4,"KTAP"
 KTAP:
 	RCALL	DUPP
 	SBIW	TOSL,CRR
@@ -2378,69 +2442,76 @@ KTAP1:
 	RJMP	BKSP
 KTAP2:
 	RCALL	DROP
-	RCALL	SWAPP
-	RCALL	DROP
-	RJMP	DUPP
+	RCALL	CUR
+	RCALL	AT
+	RCALL	EOT
+	RJMP	STORE
 
-;   accept	( b u -- b u )
-;	Accept characters to input buffer. Return with actual count.
+;   INIT-PTR	( -- )
+;	Init bot, eot, cur.
 
-;	COLON	6,"accept"
-ACCEP:
+	COLON	8,"INIT-PTR"
+IPTR:
+	RCALL	TIB
+	RCALL	DUPP
+	RCALL	BOT
+	RCALL	STORE
+	RCALL	DOLIT
+	.DW		$50
 	RCALL	OVER
 	RCALL	PLUS
-	RCALL	OVER
-ACCP1:
-	RCALL	DDUP
-	RCALL	XORR
-	RCALL	QBRAN
-	.DW		ACCP4
-	RCALL	KEY
+	RCALL	EOT
+	RCALL	STORE
+	RCALL	CUR
+	RJMP	STORE
+
+;   ACCEPT	( -- )
+;	Accept characters to input buffer and process them.
+
+	COLON	6,"ACCEPT"
+ACC:
+	in_		r8,SREG
+	push	r8
+;	RCALL	KEY
+	savetos
+	in_		tosl,UDR0
+	clr		tosh
 	RCALL	DUPP
-	RCALL	BLANK
-	RCALL	SUBB
+	SBIW	TOSL,$20
 	RCALL	DOLIT
 	.DW		$5F
 	RCALL	ULESS
 	RCALL	QBRAN
-	.DW		ACCP2
+	.DW		ACC1
 	RCALL	TAP
-	RJMP	ACCP3
-ACCP2:
+	RJMP	ACC2
+ACC1:
 	RCALL	KTAP
-ACCP3:
-	RJMP	ACCP1
-ACCP4:
-	RCALL	DROP
-	RCALL	OVER
-	RJMP	SUBB
-
-;   EXPECT	( b u -- )
-;	Accept input stream and store count in SPAN.
-
-	COLON	6,"EXPECT"
-EXPEC:
-	RCALL	ACCEP
-	RCALL	SPAN
-	RCALL	STORE
-	RJMP	DROP
-
-;   QUERY	( -- )
-;	Accept input stream to terminal input buffer.
-
-	COLON	5,"QUERY"
-QUERY:
-	RCALL	TIB
-	RCALL	DOLIT
-	.DW		80
-	RCALL	ACCEP
+ACC2:
+	RCALL	CUR
+	RCALL	AT
+	RCALL	EOT
+	RCALL	AT
+	RCALL	EQUAL
+	RCALL	QBRAN
+	.DW		ACC3
+	RCALL	CUR
+	RCALL	AT
+	RCALL	BOT 
+	RCALL	AT
+	RCALL	SUBB
 	RCALL	NTIB
 	RCALL	STORE
-	RCALL	DROP
 	RCALL	DOLIT
 	.DW		0
 	RCALL	INN
-	RJMP	STORE
+	RCALL	STORE
+	RCALL	EVAL
+	RCALL	IPTR
+ACC3:
+	pop		r8
+	out_	SREG,r8
+	RETI
 
 ;; Error handling
 
@@ -2574,15 +2645,22 @@ QUIT:
 	out_ 	SPL,xl
 	ldi 	xh,high(RPP)
 	out_ 	SPH,xh
+	sei
 	RCALL	DOLIT
 	.DW		TIBB
 	RCALL	TTIB
 	RCALL	STORE
 QUIT1:
 	RCALL	LBRAC	;start interpretation
+	RCALL	IPTR
 QUIT2:
-	RCALL	QUERY	;get input
-	RCALL	EVAL
+;	RCALL	QUERY	;get input
+;	RCALL	EVAL
+;	RCALL	ACC
+	nop
+	nop
+	nop
+	nop
 	RJMP	QUIT2	;continue till error
 
 ;; The compiler
@@ -2765,7 +2843,7 @@ HI:
 ;	RCALL	STOIO
 	RCALL	CR
 	RCALL	DOTQP 	;initialize I/O
-	.DB		15,"328eForth v2.20"	;model
+	.DB		15,"328eForth v2.21"	;model
 	RJMP	CR
 
 ;   COLD	( -- )
@@ -3425,6 +3503,8 @@ VARIA:
 	CALL	DOLIT
 	.DW		2
 	JMP		ALLOT
+
+
 
 ;============================================================================
 
